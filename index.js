@@ -2,16 +2,21 @@ const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion } = require("mongodb");
+const jwt = require("jsonwebtoken")
 
 const app = express();
 const port = process.env.port || 5000
 //middleware
-app.use(cors());
+app.use(
+  cors({
+    origin: ["http://localhost:5173"],
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 const uri =process.env.MONGO_URI
 
-  // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -22,22 +27,37 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
     console.log("mongo connected successfully");
 
     const db = client.db("homeDishDB");
     const userCollection = db.collection("users")
-    
 
-    // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
-    // console.log(
-    //   "Pinged your deployment. You successfully connected to MongoDB!"
-    // );
+    //register user
+    app.post("/registration", async (req, res) => {
+      const user = req.body;
+
+      const userExists = await userCollection.findOne({ email: user.email });
+
+      if (userExists) {
+        return res.status(409).json({
+          message: "user already exists",
+        });
+      }
+
+      const newUser = {
+        ...user,
+        role: "user",
+        status: "active",
+      };
+
+      const result = await userCollection.insertOne(newUser);
+
+      res.send(result);
+    });
+
+  
   } finally {
-    // Ensures that the client will close when you finish/error
-    // await client.close();
   }
 }
 run().catch(console.dir);
