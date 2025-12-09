@@ -31,18 +31,29 @@ const getToken = (req) => {
 
 //verify token middleware
 const tokenVerify = (req, res, next) => {
-  const token = req.cookies?.token;
+  let token = null;
+
+  if (req.cookies?.token) {
+    token = req.cookies.token;
+  }
+
+    if (!token) {
+      const authHeader = req.headers.authorization || req.headers.Authorization;
+      if (authHeader?.startsWith("Bearer ")) {
+        token = authHeader.split(" ")[1];
+      }
+    }
 
   if (!token) {
     return res.status(401).json({
-      message: "Unauthorized",
+      message: "Unauthorized: no token",
     });
   }
 
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) return res.status(401).json({ message: "invalid token" });
 
-    req.user = decoded;
+    req.decoded = decoded;
     next();
   });
 };
@@ -71,7 +82,7 @@ const verifyAdmin = (userCollection) => {
       })
     }
 
-    res.currentUser = user;
+    req.currentUser = user;
     next();
   }
 }
@@ -92,7 +103,9 @@ async function run() {
     console.log("mongo connected successfully");
 
     const db = client.db("homeDishDB");
+    //collections
     const userCollection = db.collection("users");
+    const roleReqCollection = db.collection("roleReq")
 
     //make admin
     async function makeAdmin() {
@@ -185,6 +198,7 @@ async function run() {
           httpOnly: true,
           secure: false,
           sameSite: "lax",
+          path: "/",
           maxAge: 7 * 24 * 60 * 60 * 1000,
         });
 
@@ -221,6 +235,54 @@ async function run() {
         
       }
     })
+
+    //all users
+    app.get(
+      "/admin/users",
+      tokenVerify,
+      verifyAdmin(userCollection),
+      async (req, res) => {
+        try {
+
+          const users = await userCollection.find().toArray();
+
+          res.send({
+            success: true,
+            count: users.length,
+            data: users
+          })
+          
+        } catch (err) {
+          console.log(err);
+          res.status(500).json({
+            message: "failed to fetch users"
+          })
+        }
+      }
+    );
+    
+    //role request
+    app.get(
+      "/admin/roleReq",
+      tokenVerify,
+      verifyAdmin(userCollection),
+      async (req, res) => {
+        try {
+          const roleReq = await roleReqCollection.find().toArray();
+
+          res.send({
+            success: true,
+            count: roleReq.length,
+            data: roleReq,
+          });
+        } catch (err) {
+          console.log(err);
+          res.status(500).json({
+            message: "failed to fetch users",
+          });
+        }
+      }
+    );
   } finally {
   }
 }
