@@ -17,7 +17,19 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 
-//token middleware
+//get token from cooke middleware
+const getToken = (req) => {
+  if (req.cookie?.token) return req.cookie?.token
+  
+  const authHeader = req.headers.authorization || req.headers.Authorization;
+  
+  if (authHeader && authHeader?.startsWith("Bearer ")) {
+    return authHeader.split(" ")[1]
+  }
+  return null;
+}
+
+//verify token middleware
 const tokenVerify = (req, res, next) => {
   const token = req.cookies?.token;
 
@@ -34,6 +46,35 @@ const tokenVerify = (req, res, next) => {
     next();
   });
 };
+
+//verify admin
+const verifyAdmin = (userCollection) => {
+  return async (req, res, next) => {
+    const email = req.decoded?.email;
+    if (!email) {
+      return res.status(401).json({
+        message: "Unauthorized: no emil in token"
+      })
+    }
+
+    const user = await userCollection.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({
+        message: "user not found"
+      })
+    }
+
+    if (user.role !== "admin") {
+      return res.status(403).json({
+        message: "Forbidden: Admin only"
+      })
+    }
+
+    res.currentUser = user;
+    next();
+  }
+}
 
 const uri = process.env.MONGO_URI;
 
@@ -52,6 +93,39 @@ async function run() {
 
     const db = client.db("homeDishDB");
     const userCollection = db.collection("users");
+
+    //make admin
+    async function makeAdmin() {
+      const adminEmail = "tanjil@gmail.com";
+
+      const existingUser = await userCollection.findOne({ email: adminEmail });
+
+      if (!existingUser) {
+        await userCollection.insertOne({
+          name: "Admin User",
+          email: adminEmail,
+          role: "admin",
+          status: "active",
+
+        })
+
+        console.log("admin created", adminEmail);
+      }
+      else {
+        if (existingUser.role !== "admin") {
+          await userCollection.updateOne(
+            { email: adminEmail },
+            { $set: { role: "admin" } }
+          );
+          console.log("user promoted to admin", adminEmail);
+        }
+        else {
+          console.log("Admin already exists", adminEmail);
+        }
+      }
+    }
+
+    await makeAdmin();
 
     //register user
     app.post("/registration", async (req, res) => {
