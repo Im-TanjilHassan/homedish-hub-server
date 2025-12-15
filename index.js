@@ -25,12 +25,12 @@ const tokenVerify = (req, res, next) => {
     token = req.cookies.token;
   }
 
-    if (!token) {
-      const authHeader = req.headers.authorization || req.headers.Authorization;
-      if (authHeader?.startsWith("Bearer ")) {
-        token = authHeader.split(" ")[1];
-      }
+  if (!token) {
+    const authHeader = req.headers.authorization || req.headers.Authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      token = authHeader.split(" ")[1];
     }
+  }
 
   if (!token) {
     return res.status(401).json({
@@ -39,7 +39,9 @@ const tokenVerify = (req, res, next) => {
   }
 
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) return res.status(401).json({ message: "invalid token" });
+    if (err) {
+      return res.status(401).json({ message: "invalid token" });
+    }
 
     req.decoded = decoded;
     next();
@@ -52,28 +54,28 @@ const verifyAdmin = (userCollection) => {
     const email = req.decoded?.email;
     if (!email) {
       return res.status(401).json({
-        message: "Unauthorized: no emil in token"
-      })
+        message: "Unauthorized: no emil in token",
+      });
     }
 
     const user = await userCollection.findOne({ email });
 
     if (!user) {
       return res.status(404).json({
-        message: "user not found"
-      })
+        message: "user not found",
+      });
     }
 
     if (user.role !== "admin") {
       return res.status(403).json({
-        message: "Forbidden: Admin only"
-      })
+        message: "Forbidden: Admin only",
+      });
     }
 
     req.currentUser = user;
     next();
-  }
-}
+  };
+};
 
 const uri = process.env.MONGO_URI;
 
@@ -93,7 +95,7 @@ async function run() {
     const db = client.db("homeDishDB");
     //collections
     const userCollection = db.collection("users");
-    const roleReqCollection = db.collection("roleReq")
+    const roleReqCollection = db.collection("roleReq");
 
     //make admin
     async function makeAdmin() {
@@ -107,20 +109,17 @@ async function run() {
           email: adminEmail,
           role: "admin",
           status: "active",
-
-        })
+        });
 
         console.log("admin created", adminEmail);
-      }
-      else {
+      } else {
         if (existingUser.role !== "admin") {
           await userCollection.updateOne(
             { email: adminEmail },
             { $set: { role: "admin" } }
           );
           console.log("user promoted to admin", adminEmail);
-        }
-        else {
+        } else {
           console.log("Admin already exists", adminEmail);
         }
       }
@@ -207,25 +206,23 @@ async function run() {
 
         const user = await userCollection.findOne(
           { email },
-          { projection: { name: 1, email: 1, role: 1, status: 1, address: 1, } }
+          { projection: { name: 1, email: 1, role: 1, status: 1, address: 1 } }
         );
-        
+
         if (!user) {
           return res.status(404).json({
-            message: "user not found!"
-          })
+            message: "user not found!",
+          });
         }
 
-        res.send(user)
-        
+        res.send(user);
       } catch (err) {
         console.log(err);
         res.status(500).json({
-          message: "Failed to load profile"
-        })
-        
+          message: "Failed to load profile",
+        });
       }
-    })
+    });
 
     //user logout
     app.post("/logout", (req, res) => {
@@ -246,7 +243,6 @@ async function run() {
       }
     });
 
-
     //all users
     app.get(
       "/admin/users",
@@ -254,37 +250,12 @@ async function run() {
       verifyAdmin(userCollection),
       async (req, res) => {
         try {
-
           const users = await userCollection.find().toArray();
 
           res.send({
             success: true,
             count: users.length,
-            data: users
-          })
-          
-        } catch (err) {
-          console.log(err);
-          res.status(500).json({
-            message: "failed to fetch users"
-          })
-        }
-      }
-    );
-    
-    //role request
-    app.get(
-      "/admin/roleReq",
-      tokenVerify,
-      verifyAdmin(userCollection),
-      async (req, res) => {
-        try {
-          const roleReq = await roleReqCollection.find().toArray();
-
-          res.send({
-            success: true,
-            count: roleReq.length,
-            data: roleReq,
+            data: users,
           });
         } catch (err) {
           console.log(err);
@@ -294,6 +265,60 @@ async function run() {
         }
       }
     );
+
+    //role request
+    app.post("/chefRequest", tokenVerify, async (req, res) => {
+      try {
+        const email = req.decoded.email;
+        console.log(email);
+        
+
+        // Find user
+        const user = await userCollection.findOne({ email });
+
+        if (!user) {
+          return res.status(404).json({
+            message: "User not found",
+          });
+        }
+
+        // Prevent duplicate requests
+        if (user.role === "chef") {
+          return res.status(400).json({
+            message: "You are already a chef",
+          });
+        }
+
+        if (user.role === "chef-pending") {
+          return res.status(409).json({
+            message: "Chef request already submitted",
+          });
+        }
+
+        // Update role → chef-pending
+        const result = await userCollection.updateOne(
+          { email },
+          {
+            $set: {
+              role: "chef-pending",
+              chefRequestedAt: new Date(),
+            },
+          }
+        );
+
+        // Response
+        res.status(200).json({
+          message: "Chef request submitted successfully",
+          result,
+        });
+      } catch (error) {
+        console.log("Chef request error:", error);
+
+        res.status(500).json({
+          message: "Failed to submit chef request",
+        });
+      }
+    });
   } finally {
   }
 }
