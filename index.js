@@ -270,8 +270,6 @@ async function run() {
     app.post("/chefRequest", tokenVerify, async (req, res) => {
       try {
         const email = req.decoded.email;
-        console.log(email);
-        
 
         // Find user
         const user = await userCollection.findOne({ email });
@@ -319,6 +317,23 @@ async function run() {
         });
       }
     });
+
+    //get pending chef request
+    app.get("/chef-requests", tokenVerify, verifyAdmin, async (req, res) => {
+      try {
+        const pendingChefs = await userCollection
+          .find({ role: "chef-pending" })
+          .project({ name: 1, email: 1, image: 1, chefRequestedAt: 1, role: 1 })
+          .toArray();
+
+        res.status(200).json(pendingChefs);
+      } catch (err) {
+        res.status(500).json({
+          message: "Failed to load chef requests",
+        });
+      }
+    });
+
   } finally {
   }
 }
