@@ -17,18 +17,6 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 
-//get token from cooke middleware
-const getToken = (req) => {
-  if (req.cookie?.token) return req.cookie?.token
-  
-  const authHeader = req.headers.authorization || req.headers.Authorization;
-  
-  if (authHeader && authHeader?.startsWith("Bearer ")) {
-    return authHeader.split(" ")[1]
-  }
-  return null;
-}
-
 //verify token middleware
 const tokenVerify = (req, res, next) => {
   let token = null;
@@ -217,7 +205,10 @@ async function run() {
       try {
         const email = req.decoded.email;
 
-        const user = await userCollection.findOne({ email })
+        const user = await userCollection.findOne(
+          { email },
+          { projection: { name: 1, email: 1, role: 1, status: 1, address: 1, } }
+        );
         
         if (!user) {
           return res.status(404).json({
@@ -235,6 +226,26 @@ async function run() {
         
       }
     })
+
+    //user logout
+    app.post("/logout", (req, res) => {
+      try {
+        res
+          .clearCookie("token", {
+            httpOnly: true,
+            secure: false,
+            sameSite: "lax",
+          })
+          .status(200)
+          .json({ success: true, message: "Logged out successfully" });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          message: "Logout failed",
+        });
+      }
+    });
+
 
     //all users
     app.get(
