@@ -19,20 +19,27 @@ app.use(cookieParser());
 
 //verify token middleware
 const tokenVerify = (req, res, next) => {
+  // console.log("tokenVerify HIT");
   let token = null;
+
+  // console.log("Cookies:", req.cookies);
+  // console.log("Auth header:", req.headers.authorization);
 
   if (req.cookies?.token) {
     token = req.cookies.token;
+    // console.log("Token from cookie");
   }
 
   if (!token) {
     const authHeader = req.headers.authorization || req.headers.Authorization;
     if (authHeader?.startsWith("Bearer ")) {
       token = authHeader.split(" ")[1];
+      // console.log("Token from header");
     }
   }
 
   if (!token) {
+    // console.log("NO TOKEN FOUND");
     return res.status(401).json({
       message: "Unauthorized: no token",
     });
@@ -43,6 +50,7 @@ const tokenVerify = (req, res, next) => {
       return res.status(401).json({ message: "invalid token" });
     }
 
+    // console.log("JWT VERIFIED:", decoded.email);
     req.decoded = decoded;
     next();
   });
@@ -66,7 +74,7 @@ const verifyAdmin = (userCollection) => {
       });
     }
 
-    if (user.role !== "admin") {
+    if (!user || user.role !== "admin") {
       return res.status(403).json({
         message: "Forbidden: Admin only",
       });
@@ -319,14 +327,16 @@ async function run() {
     });
 
     //get pending chef request
-    app.get("/chef-requests", tokenVerify, verifyAdmin, async (req, res) => {
+    app.get("/chefRequests", tokenVerify, verifyAdmin(userCollection), async (req, res) => {
+      
       try {
+
         const pendingChefs = await userCollection
           .find({ role: "chef-pending" })
-          .project({ name: 1, email: 1, image: 1, chefRequestedAt: 1, role: 1 })
+          .project({ name: 1, email: 1, image: 1, chefRequestedAt: 1, role: 1, address: 1 })
           .toArray();
 
-        res.status(200).json(pendingChefs);
+        res.status(200).send(pendingChefs);
       } catch (err) {
         res.status(500).json({
           message: "Failed to load chef requests",
