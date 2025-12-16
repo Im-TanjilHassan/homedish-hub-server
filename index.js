@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 
@@ -84,6 +84,23 @@ const verifyAdmin = (userCollection) => {
     next();
   };
 };
+
+//generate chefId
+const generateChefId = async (userCollection) => {
+  let chefId;
+  let exists = true;
+
+  while (exists) {
+    const random = Math.floor(1000 + Math.random() * 9000);
+    chefId = `chef-${random}`;
+
+    const user = await userCollection.findOne({ chefId });
+    if (!user) exists = false;
+  }
+
+  return chefId;
+};
+
 
 const uri = process.env.MONGO_URI;
 
@@ -343,6 +360,52 @@ async function run() {
         });
       }
     });
+
+    //chef req approve
+    app.patch(
+      "/chefRequests/accept/:id",
+      tokenVerify,
+      verifyAdmin(userCollection),
+      async (req, res) => {
+        try {
+          const userId = req.params.id;
+
+          const user = await userCollection.findOne({
+            _id: new ObjectId(userId),
+          });
+
+          if (!user || user.role !== "chef-pending") {
+            return res.status(400).json({
+              message: "Invalid chef request",
+            });
+          }
+
+          const chefId = await generateChefId(userCollection);
+
+          await userCollection.updateOne(
+            { _id: new ObjectId(userId) },
+            {
+              $set: {
+                role: "chef",
+                chefId,
+                chefApprovedAt: new Date(),
+              },
+            }
+          );
+
+          res.status(200).json({
+            message: "Chef approved successfully",
+            chefId,
+          });
+        } catch (err) {
+          console.error(err);
+          res.status(500).json({
+            message: "Failed to approve chef request",
+          });
+        }
+      }
+    );
+
 
   } finally {
   }
