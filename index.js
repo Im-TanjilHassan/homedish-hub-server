@@ -19,27 +19,27 @@ app.use(cookieParser());
 
 //verify token middleware
 const tokenVerify = (req, res, next) => {
-  // console.log("tokenVerify HIT");
+  console.log("tokenVerify HIT");
   let token = null;
 
-  // console.log("Cookies:", req.cookies);
-  // console.log("Auth header:", req.headers.authorization);
+  console.log("Cookies:", req.cookies);
+  console.log("Auth header:", req.headers.authorization);
 
   if (req.cookies?.token) {
     token = req.cookies.token;
-    // console.log("Token from cookie");
+    console.log("Token from cookie");
   }
 
   if (!token) {
     const authHeader = req.headers.authorization || req.headers.Authorization;
     if (authHeader?.startsWith("Bearer ")) {
       token = authHeader.split(" ")[1];
-      // console.log("Token from header");
+      console.log("Token from header");
     }
   }
 
   if (!token) {
-    // console.log("NO TOKEN FOUND");
+    console.log("NO TOKEN FOUND");
     return res.status(401).json({
       message: "Unauthorized: no token",
     });
@@ -50,7 +50,7 @@ const tokenVerify = (req, res, next) => {
       return res.status(401).json({ message: "invalid token" });
     }
 
-    // console.log("JWT VERIFIED:", decoded.email);
+    console.log("JWT VERIFIED:", decoded.email);
     req.decoded = decoded;
     next();
   });
@@ -101,6 +101,45 @@ const generateChefId = async (userCollection) => {
   return chefId;
 };
 
+//verifyChef
+const verifyChef = (userCollection) => {
+
+  return async (req, res, next) => {
+    console.log("VERIFY CHEF HIT");
+    try {
+      const email = req.decoded.email;
+      console.log("DECODED EMAIL:", email);
+
+      if (!email) {
+        return res.status(401).send({ message: "Unauthorized access" });
+      }
+
+      const user = await userCollection.findOne({ email });
+      console.log("USER FOUND:", user);
+
+      // Role check
+      if (!user || user.role !== "chef") {
+        return res.status(403).send({ message: "forbidden" });
+      }
+
+      // Fraud check
+      if (user.status === "fraud") {
+        return res.status(403).send({ message: "Fraud chef access blocked" });
+      }
+
+      // useful data
+      req.chefId = user.chefId;
+      req.chefUser = user;
+
+      next();
+    } catch (error) {
+      console.error("VERIFY CHEF ERROR:", error);
+      res.status(500).send({ message: "Chef verification failed" });
+    }
+  }
+};
+
+
 
 const uri = process.env.MONGO_URI;
 
@@ -120,7 +159,7 @@ async function run() {
     const db = client.db("homeDishDB");
     //collections
     const userCollection = db.collection("users");
-    const roleReqCollection = db.collection("roleReq");
+    const mealsCollection = db.collection("meals");
 
     //make admin
     async function makeAdmin() {
@@ -345,7 +384,6 @@ async function run() {
       }
     );
 
-
     //role request
     app.post("/chefRequest", tokenVerify, async (req, res) => {
       try {
@@ -517,6 +555,77 @@ async function run() {
         }
       }
     );
+
+    //create meal
+    app.post("/meals", tokenVerify, verifyChef(userCollection), async (req, res) => {
+      try {
+        console.log("REQ BODY:", req.body);
+        console.log("DECODED:", req.decoded);
+        console.log("CHEF ID:", req.chefId);
+        
+      const {
+        foodName,
+        chefName,
+        foodImage,
+        price,
+        ingredients,
+        estimatedDeliveryTime,
+        chefExperience,
+      } = req.body;
+
+        if (
+          !foodName ||
+          !foodImage ||
+          !price ||
+          !ingredients ||
+          !estimatedDeliveryTime
+        ) {
+          return res.status(400).send({
+            message: "Missing required meal fields",
+          });
+        }
+
+        // price must be a number
+        if (isNaN(price)) {
+          return res.status(400).send({
+            message: "Price must be a valid number",
+          });
+        }
+
+        // ingredients must be an array
+        const ingredientsArray = Array.isArray(ingredients)
+          ? ingredients
+          : ingredients
+              .split(",")
+              .map((i) => i.trim())
+              .filter(Boolean);
+
+        const newMeal = {
+          foodName,
+          chefName,
+          foodImage,
+          price: Number(price),
+          ingredients: ingredientsArray,
+          estimatedDeliveryTime,
+          chefExperience: chefExperience,
+          rating: 0,
+          chefId: req.chefId,
+          userEmail: req.decoded.email,
+          createdAt: new Date(),
+        };
+
+        const result = await mealsCollection.insertOne(newMeal);
+
+        res.send({
+          success: true,
+          insertedId: result.insertedId,
+        });
+      } catch (error) {
+        console.error("CREATE MEAL ERROR:", error);
+        res.status(500).send({ message: "Failed to create meal" });
+      }
+    });
+
   } finally {
   }
 }
