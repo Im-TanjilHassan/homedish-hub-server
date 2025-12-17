@@ -231,7 +231,7 @@ async function run() {
 
         const user = await userCollection.findOne(
           { email },
-          { projection: { name: 1, email: 1, role: 1, status: 1, address: 1 } }
+          { projection: { name: 1, email: 1, role: 1, status: 1, address: 1, chefId:1 } }
         );
 
         if (!user) {
@@ -270,7 +270,7 @@ async function run() {
 
     //all users
     app.get(
-      "/admin/users",
+      "/admin/allUsers",
       tokenVerify,
       verifyAdmin(userCollection),
       async (req, res) => {
@@ -290,6 +290,61 @@ async function run() {
         }
       }
     );
+
+    //make user fraud
+    app.patch(
+      "/admin/users/:id/fraud",
+      tokenVerify,
+      verifyAdmin(userCollection),
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+
+          const user = await userCollection.findOne({
+            _id: new ObjectId(id),
+          });
+
+          if (!user) {
+            return res.status(404).json({
+              success: false,
+              message: "User not found",
+            });
+          }
+
+          if (user.role === "admin") {
+            return res.status(403).json({
+              success: false,
+              message: "Admin cannot be marked as fraud",
+            });
+          }
+
+          if (user.status === "fraud") {
+            return res.status(400).json({
+              success: false,
+              message: "User already marked as fraud",
+            });
+          }
+
+          const result = await userCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: "fraud" } }
+          );
+
+          res.status(200).json({
+            success: true,
+            message: "User marked as fraud successfully",
+            modifiedCount: result.modifiedCount,
+          });
+        } catch (error) {
+          console.error("Make fraud error:", error);
+          res.status(500).json({
+            success: false,
+            message: "Failed to update user status",
+          });
+        }
+      }
+    );
+
 
     //role request
     app.post("/chefRequest", tokenVerify, async (req, res) => {
@@ -344,22 +399,32 @@ async function run() {
     });
 
     //get pending chef request
-    app.get("/chefRequests", tokenVerify, verifyAdmin(userCollection), async (req, res) => {
-      
-      try {
+    app.get(
+      "/chefRequests",
+      tokenVerify,
+      verifyAdmin(userCollection),
+      async (req, res) => {
+        try {
+          const pendingChefs = await userCollection
+            .find({ role: "chef-pending" })
+            .project({
+              name: 1,
+              email: 1,
+              image: 1,
+              chefRequestedAt: 1,
+              role: 1,
+              address: 1,
+            })
+            .toArray();
 
-        const pendingChefs = await userCollection
-          .find({ role: "chef-pending" })
-          .project({ name: 1, email: 1, image: 1, chefRequestedAt: 1, role: 1, address: 1 })
-          .toArray();
-
-        res.status(200).send(pendingChefs);
-      } catch (err) {
-        res.status(500).json({
-          message: "Failed to load chef requests",
-        });
+          res.status(200).send(pendingChefs);
+        } catch (err) {
+          res.status(500).json({
+            message: "Failed to load chef requests",
+          });
+        }
       }
-    });
+    );
 
     //chef req approve
     app.patch(
@@ -406,7 +471,52 @@ async function run() {
       }
     );
 
+    //chef req reject
+    app.patch(
+      "/chefRequests/reject/:id",
+      tokenVerify,
+      verifyAdmin(userCollection),
+      async (req, res) => {
+        try {
+          const { id } = req.params;
 
+          const user = await userCollection.findOne({
+            _id: new ObjectId(id),
+          });
+
+          if (!user) {
+            return res.status(404).json({
+              message: "User not found",
+            });
+          }
+
+          if (user.role !== "chef-pending") {
+            return res.status(400).json({
+              message: "This user has no pending chef request",
+            });
+          }
+
+          const result = await userCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: { role: "user" },
+              $unset: { chefRequestedAt: "" },
+            }
+          );
+
+          res.status(200).json({
+            message: "Chef request rejected successfully",
+            result,
+          });
+        } catch (error) {
+          console.error("Reject chef request error:", error);
+
+          res.status(500).json({
+            message: "Failed to reject chef request",
+          });
+        }
+      }
+    );
   } finally {
   }
 }
