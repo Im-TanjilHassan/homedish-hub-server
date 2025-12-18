@@ -19,27 +19,27 @@ app.use(cookieParser());
 
 //verify token middleware
 const tokenVerify = (req, res, next) => {
-  console.log("tokenVerify HIT");
+  // console.log("tokenVerify HIT");
   let token = null;
 
-  console.log("Cookies:", req.cookies);
-  console.log("Auth header:", req.headers.authorization);
+  // console.log("Cookies:", req.cookies);
+  // console.log("Auth header:", req.headers.authorization);
 
   if (req.cookies?.token) {
     token = req.cookies.token;
-    console.log("Token from cookie");
+    // console.log("Token from cookie");
   }
 
   if (!token) {
     const authHeader = req.headers.authorization || req.headers.Authorization;
     if (authHeader?.startsWith("Bearer ")) {
       token = authHeader.split(" ")[1];
-      console.log("Token from header");
+      // console.log("Token from header");
     }
   }
 
   if (!token) {
-    console.log("NO TOKEN FOUND");
+    // console.log("NO TOKEN FOUND");
     return res.status(401).json({
       message: "Unauthorized: no token",
     });
@@ -50,7 +50,7 @@ const tokenVerify = (req, res, next) => {
       return res.status(401).json({ message: "invalid token" });
     }
 
-    console.log("JWT VERIFIED:", decoded.email);
+    // console.log("JWT VERIFIED:", decoded.email);
     req.decoded = decoded;
     next();
   });
@@ -103,19 +103,18 @@ const generateChefId = async (userCollection) => {
 
 //verifyChef
 const verifyChef = (userCollection) => {
-
   return async (req, res, next) => {
-    console.log("VERIFY CHEF HIT");
+    // console.log("VERIFY CHEF HIT");
     try {
       const email = req.decoded.email;
-      console.log("DECODED EMAIL:", email);
+      // console.log("DECODED EMAIL:", email);
 
       if (!email) {
         return res.status(401).send({ message: "Unauthorized access" });
       }
 
       const user = await userCollection.findOne({ email });
-      console.log("USER FOUND:", user);
+      // console.log("USER FOUND:", user);
 
       // Role check
       if (!user || user.role !== "chef") {
@@ -133,13 +132,11 @@ const verifyChef = (userCollection) => {
 
       next();
     } catch (error) {
-      console.error("VERIFY CHEF ERROR:", error);
+      // console.error("VERIFY CHEF ERROR:", error);
       res.status(500).send({ message: "Chef verification failed" });
     }
-  }
+  };
 };
-
-
 
 const uri = process.env.MONGO_URI;
 
@@ -160,6 +157,7 @@ async function run() {
     //collections
     const userCollection = db.collection("users");
     const mealsCollection = db.collection("meals");
+    const reviewsCollection = db.collection("reviews");
 
     //make admin
     async function makeAdmin() {
@@ -270,7 +268,16 @@ async function run() {
 
         const user = await userCollection.findOne(
           { email },
-          { projection: { name: 1, email: 1, role: 1, status: 1, address: 1, chefId:1 } }
+          {
+            projection: {
+              name: 1,
+              email: 1,
+              role: 1,
+              status: 1,
+              address: 1,
+              chefId: 1,
+            },
+          }
         );
 
         if (!user) {
@@ -557,74 +564,185 @@ async function run() {
     );
 
     //create meal
-    app.post("/meals", tokenVerify, verifyChef(userCollection), async (req, res) => {
+    app.post(
+      "/meals",
+      tokenVerify,
+      verifyChef(userCollection),
+      async (req, res) => {
+        try {
+          const {
+            foodName,
+            chefName,
+            foodImage,
+            price,
+            ingredients,
+            estimatedDeliveryTime,
+            chefExperience,
+          } = req.body;
+
+          if (
+            !foodName ||
+            !foodImage ||
+            !price ||
+            !ingredients ||
+            !estimatedDeliveryTime
+          ) {
+            return res.status(400).send({
+              message: "Missing required meal fields",
+            });
+          }
+
+          // price must be a number
+          if (isNaN(price)) {
+            return res.status(400).send({
+              message: "Price must be a valid number",
+            });
+          }
+
+          // ingredients must be an array
+          const ingredientsArray = Array.isArray(ingredients)
+            ? ingredients
+            : ingredients
+                .split(",")
+                .map((i) => i.trim())
+                .filter(Boolean);
+
+          const newMeal = {
+            foodName,
+            chefName,
+            foodImage,
+            price: Number(price),
+            ingredients: ingredientsArray,
+            estimatedDeliveryTime,
+            chefExperience: chefExperience,
+            rating: 0,
+            chefId: req.chefId,
+            userEmail: req.decoded.email,
+            createdAt: new Date(),
+          };
+
+          const result = await mealsCollection.insertOne(newMeal);
+
+          res.send({
+            success: true,
+            insertedId: result.insertedId,
+          });
+        } catch (error) {
+          // console.error("CREATE MEAL ERROR:", error);
+          res.status(500).send({ message: "Failed to create meal" });
+        }
+      }
+    );
+
+    //latest meal for home page
+    app.get("/meals/home", async (req, res) => {
       try {
-        console.log("REQ BODY:", req.body);
-        console.log("DECODED:", req.decoded);
-        console.log("CHEF ID:", req.chefId);
-        
-      const {
-        foodName,
-        chefName,
-        foodImage,
-        price,
-        ingredients,
-        estimatedDeliveryTime,
-        chefExperience,
-      } = req.body;
+        const meals = await mealsCollection
+          .find({})
+          .sort({ createdAt: -1 })
+          .limit(6)
+          .project({
+            foodName: 1,
+            chefName: 1,
+            foodImage: 1,
+            price: 1,
+            rating: 1,
+          })
+          .toArray();
 
+        res.send(meals);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to load meals" });
+      }
+    });
+
+    //get single meal data
+    app.get("/meals/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        // Validate MongoDB ObjectId
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: "Invalid meal ID" });
+        }
+
+        const query = { _id: new ObjectId(id) };
+        const meal = await mealsCollection.findOne(query);
+
+        if (!meal) {
+          return res.status(404).send({ message: "Meal not found" });
+        }
+
+        res.send(meal);
+      } catch (error) {
+        console.error("Error fetching meal:", error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    //give review
+    app.post("/reviews", tokenVerify, async (req, res) => {
+      try {
+        const { foodId, reviewerName, reviewerImage, rating, comment } =
+          req.body;
+
+        // Basic validation
         if (
-          !foodName ||
-          !foodImage ||
-          !price ||
-          !ingredients ||
-          !estimatedDeliveryTime
+          !foodId ||
+          !ObjectId.isValid(foodId) ||
+          !reviewerName ||
+          !rating ||
+          !comment
         ) {
-          return res.status(400).send({
-            message: "Missing required meal fields",
-          });
+          return res.status(400).send({ message: "Invalid review data" });
         }
 
-        // price must be a number
-        if (isNaN(price)) {
-          return res.status(400).send({
-            message: "Price must be a valid number",
-          });
-        }
-
-        // ingredients must be an array
-        const ingredientsArray = Array.isArray(ingredients)
-          ? ingredients
-          : ingredients
-              .split(",")
-              .map((i) => i.trim())
-              .filter(Boolean);
-
-        const newMeal = {
-          foodName,
-          chefName,
-          foodImage,
-          price: Number(price),
-          ingredients: ingredientsArray,
-          estimatedDeliveryTime,
-          chefExperience: chefExperience,
-          rating: 0,
-          chefId: req.chefId,
-          userEmail: req.decoded.email,
-          createdAt: new Date(),
+        const review = {
+          foodId: new ObjectId(foodId),
+          reviewerName,
+          reviewerImage,
+          rating: Number(rating),
+          comment,
+          date: new Date(),
         };
 
-        const result = await mealsCollection.insertOne(newMeal);
+        const result = await reviewsCollection.insertOne(review);
 
         res.send({
           success: true,
           insertedId: result.insertedId,
+          message: "Review submitted successfully!",
         });
       } catch (error) {
-        console.error("CREATE MEAL ERROR:", error);
-        res.status(500).send({ message: "Failed to create meal" });
+        console.error("Error adding review:", error);
+        res.status(500).send({ message: "Failed to submit review" });
       }
     });
+
+    //get review
+    app.get("/reviews", async (req, res) => {
+      try {
+        const { foodId } = req.query;
+
+        if (!foodId || !ObjectId.isValid(foodId)) {
+          return res.status(400).send({ message: "Invalid foodId" });
+        }
+
+        const query = { foodId: new ObjectId(foodId) };
+
+        const reviews = await reviewsCollection
+          .find(query)
+          .sort({ date: -1 })
+          .toArray();
+
+        res.send(reviews);
+      } catch (error) {
+        console.error("Error fetching reviews:", error);
+        res.status(500).send({ message: "Failed to fetch reviews" });
+      }
+    });
+
 
   } finally {
   }
