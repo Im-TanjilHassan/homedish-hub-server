@@ -681,17 +681,24 @@ async function run() {
       }
     });
 
-    //give review
+    //post review
     app.post("/reviews", tokenVerify, async (req, res) => {
       try {
-        const { foodId, reviewerName, reviewerImage, rating, comment } =
-          req.body;
+        const {
+          foodId,
+          reviewerName,
+          reviewerImage,
+          rating,
+          comment,
+          reviewerEmail,
+        } = req.body;
 
         // Basic validation
         if (
           !foodId ||
           !ObjectId.isValid(foodId) ||
           !reviewerName ||
+          !reviewerEmail ||
           !rating ||
           !comment
         ) {
@@ -701,6 +708,7 @@ async function run() {
         const review = {
           foodId: new ObjectId(foodId),
           reviewerName,
+          reviewerEmail,
           reviewerImage,
           rating: Number(rating),
           comment,
@@ -741,6 +749,52 @@ async function run() {
         console.error("Error fetching reviews:", error);
         res.status(500).send({ message: "Failed to fetch reviews" });
       }
+    });
+
+    //my review
+    app.get("/my-reviews", tokenVerify, async (req, res) => {
+      const email = req.query.email;
+
+      if (email !== req.decoded.email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+
+      const reviews = await reviewsCollection
+        .aggregate([
+          {
+            $match: { reviewerEmail: email },
+          },
+          {
+            $addFields: {
+              foodObjectId: { $toObjectId: "$foodId" },
+            },
+          },
+          {
+            $lookup: {
+              from: "meals",
+              localField: "foodObjectId",
+              foreignField: "_id",
+              as: "meal",
+            },
+          },
+          {
+            $unwind: "$meal",
+          },
+          {
+            $project: {
+              rating: 1,
+              comment: 1,
+              date: 1,
+              foodName: "$meal.foodName",
+            },
+          },
+          {
+            $sort: { date: -1 },
+          },
+        ])
+        .toArray();
+
+      res.send(reviews);
     });
 
 
