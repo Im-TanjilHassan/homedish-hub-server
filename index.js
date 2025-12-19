@@ -634,6 +634,31 @@ async function run() {
       }
     );
 
+    //get all meal with sort
+    app.get("/allMeals", async (req, res) => {
+      try {
+        const sort = req.query.sort;
+
+        let sortOption = {};
+
+        if (sort === "asc") {
+          sortOption = { price: 1 };
+        } else if (sort === "desc") {
+          sortOption = { price: -1 };
+        }
+
+        const meals = await mealsCollection.find().sort(sortOption).toArray();
+
+        res.send(meals);
+      } catch (error) {
+        res.status(500).send({
+          message: "Failed to fetch meals",
+          error: error.message,
+        });
+      }
+    });
+
+
     //latest meal for home page
     app.get("/meals/home", async (req, res) => {
       try {
@@ -684,6 +709,16 @@ async function run() {
     //post review
     app.post("/reviews", tokenVerify, async (req, res) => {
       try {
+        const userEmail = req.decoded.email;
+
+        const user = await userCollection.findOne({ email: userEmail });
+
+        // Role validation
+        if (!user || user.role !== "user") {
+          return res.status(403).send({
+            message: "Only normal users can submit reviews",
+          });
+        }
         const {
           foodId,
           reviewerName,
@@ -728,7 +763,21 @@ async function run() {
       }
     });
 
-    //get review
+    //get all review
+    app.get("/allReview", async (req, res) => {
+      try {
+        const reviews = await reviewsCollection
+          .find()
+          .sort({ date: -1 })
+          .toArray();
+        res.send(reviews);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch reviews" });
+      }
+    });
+
+
+    //get specific food review
     app.get("/reviews", async (req, res) => {
       try {
         const { foodId } = req.query;
