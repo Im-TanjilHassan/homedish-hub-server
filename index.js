@@ -797,6 +797,89 @@ async function run() {
       res.send(reviews);
     });
 
+    //delete my review
+    app.delete("/reviews/:id", tokenVerify, async (req, res) => {
+      const reviewId = req.params.id;
+
+      if (!ObjectId.isValid(reviewId)) {
+        return res.status(400).send({ message: "Invalid review id" });
+      }
+
+      // Find the review first
+      const review = await reviewsCollection.findOne({
+        _id: new ObjectId(reviewId),
+      });
+
+      if (!review) {
+        return res.status(404).send({ message: "Review not found" });
+      }
+
+      // Authorization check
+      if (review.reviewerEmail !== req.decoded.email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+
+      const foodId = review.foodId;
+
+      // Delete the review
+      await reviewsCollection.deleteOne({
+        _id: new ObjectId(reviewId),
+      });
+
+      res.send({
+        success: true,
+        message: "Review deleted successfully",
+      });
+    });
+
+    //edit my review
+    app.patch("/reviews/:id", tokenVerify, async (req, res) => {
+      const reviewId = req.params.id;
+      const { rating, comment } = req.body;
+
+      if (!ObjectId.isValid(reviewId)) {
+        return res.status(400).send({ message: "Invalid review id" });
+      }
+
+      if (!rating || !comment) {
+        return res
+          .status(400)
+          .send({ message: "Rating and comment are required" });
+      }
+
+      // Find the review
+      const review = await reviewsCollection.findOne({
+        _id: new ObjectId(reviewId),
+      });
+
+      if (!review) {
+        return res.status(404).send({ message: "Review not found" });
+      }
+
+      //Authorization
+      if (review.reviewerEmail !== req.decoded.email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+
+      // Update review
+      await reviewsCollection.updateOne(
+        { _id: new ObjectId(reviewId) },
+        {
+          $set: {
+            rating: Number(rating),
+            comment,
+            date: new Date(),
+          },
+        }
+      );
+
+      res.send({
+        success: true,
+        message: "Review updated successfully",
+      });
+    });
+
+
 
   } finally {
   }
