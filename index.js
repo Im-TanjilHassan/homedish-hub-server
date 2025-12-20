@@ -159,6 +159,7 @@ async function run() {
     const mealsCollection = db.collection("meals");
     const reviewsCollection = db.collection("reviews");
     const favoriteMealCollection = db.collection("favMeals");
+    const orderCollection = db.collection("orders");
 
     //make admin
     async function makeAdmin() {
@@ -1093,7 +1094,6 @@ async function run() {
       }
     });
 
-
     // Delete a favorite meal
     app.delete("/favorites/:id", tokenVerify, async (req, res) => {
       try {
@@ -1131,6 +1131,145 @@ async function run() {
         res.status(500).send({ message: "Internal Server Error" });
       }
     });
+
+    // ORDER COLLECTION
+    // --------------------------------
+    // create order
+    app.post("/orders", tokenVerify, async (req, res) => {
+      try {
+        const {
+          foodId,
+          foodName,
+          price,
+          quantity,
+          chefId,
+          userEmail,
+          userAddress,
+        } = req.body;
+
+        // Email protection
+        if (req.decoded.email !== userEmail) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        // Basic validation
+        if (
+          !foodId ||
+          !foodName ||
+          !price ||
+          !quantity ||
+          !chefId ||
+          !userAddress
+        ) {
+          return res.status(400).send({ message: "Missing required fields" });
+        }
+
+        // Server-side calculation (never trust frontend)
+        const totalPrice = Number(price) * Number(quantity);
+
+        const order = {
+          foodId,
+          foodName,
+          price: Number(price),
+          quantity: Number(quantity),
+          totalPrice,
+          chefId,
+          paymentStatus: "Pending",
+          userEmail,
+          userAddress,
+          orderStatus: "pending",
+          orderTime: new Date(),
+        };
+
+        const result = await orderCollection.insertOne(order);
+
+        res.status(201).send({
+          message: "Order placed successfully",
+          orderId: result.insertedId,
+        });
+      } catch (error) {
+        res.status(500).send({
+          message: "Failed to place order",
+          error: error.message,
+        });
+      }
+    });
+
+    // get order for chef
+    app.get(
+      "/chef/orders",
+      tokenVerify,
+      verifyChef(userCollection),
+      async (req, res) => {
+        try {
+          const chefId = req.query.chefId;
+
+          if (!chefId) {
+            return res.status(400).send({ message: "ChefId is required" });
+          }
+
+          const result = await orderCollection
+            .find({ chefId })
+            .sort({ orderTime: -1 })
+            .toArray();
+
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ message: "Failed to fetch orders" });
+        }
+      }
+    );
+
+    // accept order
+    app.patch(
+      "/orders/accept/:id",
+      tokenVerify,
+      verifyChef(userCollection),
+      async (req, res) => {
+        const id = req.params.id;
+
+        const result = await orderCollection.updateOne(
+          { _id: new ObjectId(id), orderStatus: "pending" },
+          { $set: { orderStatus: "accepted" } }
+        );
+
+        res.send(result);
+      }
+    );
+
+    // cancel order
+    app.patch(
+      "/orders/cancel/:id",
+      tokenVerify,
+      verifyChef(userCollection),
+      async (req, res) => {
+        const id = req.params.id;
+
+        const result = await orderCollection.updateOne(
+          { _id: new ObjectId(id), orderStatus: "pending" },
+          { $set: { orderStatus: "cancelled" } }
+        );
+
+        res.send(result);
+      }
+    );
+
+    // deliver order
+    app.patch(
+      "/orders/deliver/:id",
+      tokenVerify,
+      verifyChef(userCollection),
+      async (req, res) => {
+        const id = req.params.id;
+
+        const result = await orderCollection.updateOne(
+          { _id: new ObjectId(id), orderStatus: "accepted" },
+          { $set: { orderStatus: "delivered" } }
+        );
+
+        res.send(result);
+      }
+    );
   } finally {
   }
 }
