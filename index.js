@@ -158,6 +158,7 @@ async function run() {
     const userCollection = db.collection("users");
     const mealsCollection = db.collection("meals");
     const reviewsCollection = db.collection("reviews");
+    const favoriteMealCollection = db.collection("favMeals");
 
     //make admin
     async function makeAdmin() {
@@ -189,6 +190,7 @@ async function run() {
 
     await makeAdmin();
 
+    // USER RELATED ROUTES
     //register user
     app.post("/registration", async (req, res) => {
       try {
@@ -563,6 +565,7 @@ async function run() {
       }
     );
 
+    // MEAL RELATED ROUTES
     //create meal
     app.post(
       "/meals",
@@ -658,7 +661,6 @@ async function run() {
       }
     });
 
-
     //latest meal for home page
     app.get("/meals/home", async (req, res) => {
       try {
@@ -706,6 +708,78 @@ async function run() {
       }
     });
 
+    //get specific chef meal
+    app.get(
+      "/chef/meals",
+      tokenVerify,
+      verifyChef(userCollection),
+      async (req, res) => {
+        const chefId = req.chefId;
+
+        const meals = await mealsCollection
+          .find({ chefId })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(meals);
+      }
+    );
+
+    //delete a meal
+    app.delete(
+      "/meals/:id",
+      tokenVerify,
+      verifyChef(userCollection),
+      async (req, res) => {
+        const mealId = req.params.id;
+        const chefId = req.chefId;
+
+        const result = await mealsCollection.deleteOne({
+          _id: new ObjectId(mealId),
+          chefId,
+        });
+
+        if (result.deletedCount === 0) {
+          return res
+            .status(404)
+            .send({ message: "Meal not found or unauthorized" });
+        }
+
+        res.send({ success: true, message: "Meal deleted successfully" });
+      }
+    );
+
+    //update a meal
+    app.patch(
+      "/meals/:id",
+      tokenVerify,
+      verifyChef(userCollection),
+      async (req, res) => {
+        const mealId = req.params.id;
+        const chefId = req.chefId;
+        const updatedData = req.body;
+
+        const result = await mealsCollection.updateOne(
+          { _id: new ObjectId(mealId), chefId },
+          {
+            $set: {
+              ...updatedData,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res
+            .status(404)
+            .send({ message: "Meal not found or unauthorized" });
+        }
+
+        res.send({ success: true, message: "Meal updated successfully" });
+      }
+    );
+
+    // REVIEW RELATED ROUTES
     //post review
     app.post("/reviews", tokenVerify, async (req, res) => {
       try {
@@ -775,7 +849,6 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch reviews" });
       }
     });
-
 
     //get specific food review
     app.get("/reviews", async (req, res) => {
@@ -928,8 +1001,136 @@ async function run() {
       });
     });
 
+    // FAVORITE MEAL RELATED ROUTES
+    // Add to Favorite
+    app.post("/favorites", tokenVerify, async (req, res) => {
+      try {
+        const {
+          mealId,
+          mealImage,
+          mealName,
+          chefId,
+          chefName,
+          price,
+          userEmail,
+        } = req.body;
+
+        // Security check
+        if (req.decoded.email !== userEmail) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        // Required field validation
+        if (!mealId || !userEmail) {
+          return res.status(400).send({
+            message: "mealId and userEmail are required",
+          });
+        }
+
+        // Duplicate check
+        const isExist = await favoriteMealCollection.findOne({
+          mealId,
+          userEmail,
+        });
+
+        if (isExist) {
+          return res.status(409).send({
+            message: "This meal is already in your favorites Collection",
+          });
+        }
+
+        // Favorite document
+        const favoriteMeal = {
+          mealId,
+          mealName,
+          mealImage,
+          chefId,
+          chefName,
+          price,
+          userEmail,
+          addedTime: new Date(),
+        };
+
+        // Insert
+        const result = await favoriteMealCollection.insertOne(favoriteMeal);
+
+        res.status(201).send({
+          message: "Meal added to favorites successfully",
+          insertedId: result.insertedId,
+        });
+      } catch (error) {
+        res.status(500).send({
+          message: "Failed to add favorite meal",
+          error: error.message,
+        });
+      }
+    });
+
+    // Get Favorite Meals by user
+    app.get("/favorites", tokenVerify, async (req, res) => {
+      try {
+        const email = req.query.email;
+
+        // security check
+        if (!req.decoded?.email) {
+          return res.status(401).send({ message: "Unauthorized access" });
+        }
+
+        if (req.decoded.email !== email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        const result = await favoriteMealCollection
+          .find({ userEmail: email })
+          .sort({ addedTime: -1 })
+          .toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({
+          message: "Failed to fetch favorite meals",
+        });
+      }
+    });
 
 
+    // Delete a favorite meal
+    app.delete("/favorites/:id", tokenVerify, async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: "Invalid favorite ID" });
+        }
+
+        // find favorite first
+        const favorite = await favoriteMealCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!favorite) {
+          return res.status(404).send({ message: "Favorite not found" });
+        }
+
+        // security check
+        if (favorite.userEmail !== req.decoded?.email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        // delete
+        const result = await favoriteMealCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        res.send({
+          message: "Meal removed from favorites successfully",
+          deletedCount: result.deletedCount,
+        });
+      } catch (error) {
+        console.error("Delete Favorite Error:", error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
   } finally {
   }
 }
