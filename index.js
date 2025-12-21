@@ -4,6 +4,8 @@ require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
+const Stripe = require("stripe");
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 const port = process.env.port || 5000;
@@ -160,6 +162,7 @@ async function run() {
     const reviewsCollection = db.collection("reviews");
     const favoriteMealCollection = db.collection("favMeals");
     const orderCollection = db.collection("orders");
+    const paymentsCollection = db.collection("payments")
 
     //make admin
     async function makeAdmin() {
@@ -1145,6 +1148,8 @@ async function run() {
           chefId,
           userEmail,
           userAddress,
+          chefName,
+          deliveryTime,
         } = req.body;
 
         // Email protection
@@ -1159,7 +1164,9 @@ async function run() {
           !price ||
           !quantity ||
           !chefId ||
-          !userAddress
+          !userAddress ||
+          !chefName ||
+          !deliveryTime
         ) {
           return res.status(400).send({ message: "Missing required fields" });
         }
@@ -1179,6 +1186,8 @@ async function run() {
           userAddress,
           orderStatus: "pending",
           orderTime: new Date(),
+          chefName,
+          deliveryTime
         };
 
         const result = await orderCollection.insertOne(order);
@@ -1219,6 +1228,98 @@ async function run() {
         }
       }
     );
+
+    // GET orders for logged-in user
+    app.get("/orders", tokenVerify, async (req, res) => {
+      try {
+        const email = req.query.email;
+
+        // Prevent email spoofing
+        if (email !== req.decoded.email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        const orders = await orderCollection
+          .find({ userEmail: email })
+          .sort({ orderTime: -1 })
+          .toArray();
+
+        res.send(orders);
+      } catch (error) {
+        res.status(500).send({
+          message: "Failed to fetch user orders",
+        });
+      }
+    });
+
+    //get single order data
+    app.get("/orders/:id", tokenVerify, async (req, res) => {
+      const orderId = req.params.id;
+      const userEmail = req.decoded.email;
+
+      try {
+        const order = await orderCollection.findOne({
+          _id: new ObjectId(orderId),
+          userEmail: userEmail,
+        });
+
+        if (!order) {
+          return res.status(404).send({ message: "Order not found" });
+        }
+
+        res.send(order);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch order" });
+      }
+    });
+
+    //payment order
+    app.patch("/orders/payment/:id", tokenVerify, async (req, res) => {
+      const orderId = req.params.id;
+      const userEmail = req.decoded.email;
+
+      try {
+        const order = await orderCollection.findOne({
+          _id: new ObjectId(orderId),
+          userEmail: userEmail,
+        });
+
+        if (!order) {
+          return res.status(404).send({ message: "Order not found" });
+        }
+
+        // Business rules
+        if (order.orderStatus !== "accepted") {
+          return res.status(400).send({
+            message: "Payment allowed only for accepted orders",
+          });
+        }
+
+        if (order.paymentStatus === "paid") {
+          return res.status(400).send({
+            message: "Order already paid",
+          });
+        }
+
+        const result = await orderCollection.updateOne(
+          { _id: new ObjectId(orderId) },
+          {
+            $set: {
+              paymentStatus: "paid",
+              paidAt: new Date(),
+            },
+          }
+        );
+
+        res.send({
+          success: true,
+          message: "Payment successful",
+          result,
+        });
+      } catch (error) {
+        res.status(500).send({ message: "Payment failed" });
+      }
+    });
 
     // accept order
     app.patch(
@@ -1270,6 +1371,91 @@ async function run() {
         res.send(result);
       }
     );
+
+    // STRIPE PAYMENT
+    // __________________________________
+    // stipe intent
+    app.post("/create-payment-intent", tokenVerify, async (req, res) => {
+      const { orderId } = req.body;
+      const userEmail = req.decoded.email;
+
+      try {
+        const order = await orderCollection.findOne({
+          _id: new ObjectId(orderId),
+          userEmail: userEmail,
+        });
+
+        if (!order) {
+          return res.status(404).send({ message: "Order not found" });
+        }
+
+        // Business rule
+        if (order.orderStatus !== "accepted") {
+          return res.status(400).send({
+            message: "Payment allowed only for accepted orders",
+          });
+        }
+
+        if (order.paymentStatus === "paid") {
+          return res.status(400).send({
+            message: "Order already paid",
+          });
+        }
+
+        const amount = Math.round(order.totalPrice * 100);
+
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount,
+          currency: "usd",
+          payment_method_types: ["card"],
+          metadata: {
+            orderId: order._id.toString(),
+            userEmail: userEmail,
+          },
+        });
+
+        res.send({
+          clientSecret: paymentIntent.client_secret,
+        });
+      } catch (error) {
+        res.status(500).send({ message: "Payment intent creation failed" });
+      }
+    });
+
+    //post payment
+    app.post("/payments", tokenVerify, async (req, res) => {
+      const payment = req.body;
+      const userEmail = req.decoded.email;
+
+      try {
+        // Save payment history
+        const paymentResult = await paymentsCollection.insertOne({
+          ...payment,
+          userEmail,
+          createdAt: new Date(),
+        });
+
+        // Update order payment status
+        await orderCollection.updateOne(
+          { _id: new ObjectId(payment.orderId) },
+          {
+            $set: {
+              paymentStatus: "paid",
+              paidAt: new Date(),
+            },
+          }
+        );
+
+        res.send({
+          success: true,
+          paymentResult,
+        });
+      } catch (error) {
+        res.status(500).send({ message: "Payment processing failed" });
+      }
+    });
+
+
   } finally {
   }
 }
