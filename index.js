@@ -178,14 +178,14 @@ async function run() {
           status: "active",
         });
 
-        console.log("admin created", adminEmail);
+        // console.log("admin created", adminEmail);
       } else {
         if (existingUser.role !== "admin") {
           await userCollection.updateOne(
             { email: adminEmail },
             { $set: { role: "admin" } }
           );
-          console.log("user promoted to admin", adminEmail);
+          // console.log("user promoted to admin", adminEmail);
         } else {
           console.log("Admin already exists", adminEmail);
         }
@@ -570,6 +570,7 @@ async function run() {
     );
 
     // MEAL RELATED ROUTES
+    // ------------------------------
     //create meal
     app.post(
       "/meals",
@@ -624,7 +625,7 @@ async function run() {
             chefExperience: chefExperience,
             rating: 0,
             chefId: req.chefId,
-            userEmail: req.decoded.email,
+            chefEmail: req.decoded.email,
             createdAt: new Date(),
           };
 
@@ -1157,6 +1158,10 @@ async function run() {
           return res.status(403).send({ message: "Forbidden access" });
         }
 
+        const meal = await mealsCollection.findOne({
+          _id: new ObjectId(foodId),
+        });
+
         // Basic validation
         if (
           !foodId ||
@@ -1187,7 +1192,8 @@ async function run() {
           orderStatus: "pending",
           orderTime: new Date(),
           chefName,
-          deliveryTime
+          deliveryTime,
+          chefEmail: meal.chefEmail
         };
 
         const result = await orderCollection.insertOne(order);
@@ -1361,16 +1367,51 @@ async function run() {
       tokenVerify,
       verifyChef(userCollection),
       async (req, res) => {
-        const id = req.params.id;
+        const { id } = req.params;
+        const chefEmail = req.decoded.email;
+        
+
+        const order = await orderCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!order) {
+          return res.status(404).send({ message: "Order not found" });
+        }
+
+        // ownership check
+        if (order.chefEmail !== chefEmail) {
+          return res.status(403).send({ message: "Forbidden" });
+        }
+
+        // business rules
+        if (order.orderStatus !== "accepted") {
+          return res
+            .status(400)
+            .send({ message: "Order not ready for delivery" });
+        }
+
+        if (order.paymentStatus !== "paid") {
+          return res.status(400).send({ message: "Payment not completed" });
+        }
 
         const result = await orderCollection.updateOne(
-          { _id: new ObjectId(id), orderStatus: "accepted" },
-          { $set: { orderStatus: "delivered" } }
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              orderStatus: "delivered",
+              deliveredAt: new Date(),
+            },
+          }
         );
 
-        res.send(result);
+        res.send({
+          success: true,
+          message: "Order delivered successfully",
+        });
       }
     );
+
 
     // STRIPE PAYMENT
     // __________________________________
@@ -1454,6 +1495,63 @@ async function run() {
         res.status(500).send({ message: "Payment processing failed" });
       }
     });
+
+    //  ADMIN PLATFORM STATISTICS
+    // --------------------------------------------
+    app.get(
+      "/admin/platformStats",
+      tokenVerify,
+      verifyAdmin(userCollection),
+      async (req, res) => {
+        try {
+          // Total Users
+          const totalUsers = await userCollection.countDocuments();
+
+          // Orders Pending (not delivered)
+          const ordersPending = await orderCollection.countDocuments({
+            orderStatus: { $ne: "delivered" },
+          });
+
+          // Orders Delivered
+          const ordersDelivered = await orderCollection.countDocuments({
+            orderStatus: "delivered",
+          });
+
+          // Total Payment Amount (only paid orders)
+          const paymentAggregation = await orderCollection
+            .aggregate([
+              { $match: { paymentStatus: "paid" } },
+              {
+                $group: {
+                  _id: null,
+                  totalPaymentAmount: {
+                    $sum: { $multiply: ["$price", "$quantity"] },
+                  },
+                },
+              },
+            ])
+            .toArray();
+
+          const totalPaymentAmount =
+            paymentAggregation.length > 0
+              ? paymentAggregation[0].totalPaymentAmount
+              : 0;
+
+          res.send({
+            totalUsers,
+            ordersPending,
+            ordersDelivered,
+            totalPaymentAmount,
+          });
+        } catch (error) {
+          console.error("Platform stats error:", error);
+          res
+            .status(500)
+            .send({ message: "Failed to load platform statistics" });
+        }
+      }
+    );
+
 
 
   } finally {
