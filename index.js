@@ -162,7 +162,7 @@ async function run() {
     const reviewsCollection = db.collection("reviews");
     const favoriteMealCollection = db.collection("favMeals");
     const orderCollection = db.collection("orders");
-    const paymentsCollection = db.collection("payments")
+    const paymentsCollection = db.collection("payments");
 
     //make admin
     async function makeAdmin() {
@@ -177,15 +177,12 @@ async function run() {
           role: "admin",
           status: "active",
         });
-
-        // console.log("admin created", adminEmail);
       } else {
         if (existingUser.role !== "admin") {
           await userCollection.updateOne(
             { email: adminEmail },
             { $set: { role: "admin" } }
           );
-          // console.log("user promoted to admin", adminEmail);
         } else {
           console.log("Admin already exists", adminEmail);
         }
@@ -397,7 +394,131 @@ async function run() {
       }
     );
 
-    //role request
+    //ROLE REQUEST
+    // ____________________________________________
+    // ADMIN REQUESTS
+    // --------------------------------------------
+    app.post("/adminRequest", tokenVerify, async (req, res) => {
+      const email = req.decoded.email;
+
+      const user = await userCollection.findOne({ email });
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      if (user.role === "admin") {
+        return res.status(400).json({ message: "Already an admin" });
+      }
+
+      if (user.role === "admin-pending") {
+        return res
+          .status(409)
+          .json({ message: "Admin request already pending" });
+      }
+
+      if (user.role !== "user") {
+        return res.status(400).json({
+          message: "Only normal users can request admin",
+        });
+      }
+
+      await userCollection.updateOne(
+        { email },
+        {
+          $set: {
+            role: "admin-pending",
+            adminRequestedAt: new Date(),
+          },
+        }
+      );
+
+      res.send({ message: "Admin request submitted" });
+    });
+
+    // get pending admin request
+    app.get(
+      "/adminRequests",
+      tokenVerify,
+      verifyAdmin(userCollection),
+      async (req, res) => {
+        const pendingAdmins = await userCollection
+          .find({ role: "admin-pending" })
+          .project({
+            name: 1,
+            email: 1,
+            image: 1,
+            adminRequestedAt: 1,
+            role: 1,
+            address: 1,
+            uid: 1,
+          })
+          .toArray();
+
+        res.send(pendingAdmins);
+      }
+    );
+
+    // approve admin request
+    app.patch(
+      "/adminRequests/accept/:uid",
+      tokenVerify,
+      verifyAdmin(userCollection),
+      async (req, res) => {
+        const { uid } = req.params;
+        console.log(uid);
+
+        const user = await userCollection.findOne({ uid });
+        console.log(user);
+
+        if (!user || user.role !== "admin-pending") {
+          return res.status(400).json({ message: "Invalid admin request" });
+        }
+
+        await userCollection.updateOne(
+          { uid },
+          {
+            $set: {
+              role: "admin",
+              adminApprovedAt: new Date(),
+            },
+          }
+        );
+
+        res.send({ message: "Admin approved successfully" });
+      }
+    );
+
+    // reject admin request
+    app.patch(
+      "/adminRequests/reject/:uid",
+      tokenVerify,
+      verifyAdmin(userCollection),
+      async (req, res) => {
+        const { uid } = req.params;
+
+        const user = await userCollection.findOne({ uid });
+
+        if (!user || user.role !== "admin-pending") {
+          return res.status(400).json({
+            message: "No pending admin request",
+          });
+        }
+
+        await userCollection.updateOne(
+          { uid },
+          {
+            $set: { role: "user" },
+            $unset: { adminRequestedAt: "" },
+          }
+        );
+
+        res.send({ message: "Admin request rejected" });
+      }
+    );
+
+    // CHEF REQUESTS
+    // ---------------------------------------------
     app.post("/chefRequest", tokenVerify, async (req, res) => {
       try {
         const email = req.decoded.email;
@@ -642,22 +763,39 @@ async function run() {
       }
     );
 
-    //get all meal with sort
+    // get all meals with pagination, sort, search
     app.get("/allMeals", async (req, res) => {
       try {
-        const sort = req.query.sort;
+        const sort = req.query.sort || "asc";
+        const search = req.query.search || "";
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 8;
+
+        const skip = (page - 1) * limit;
 
         let sortOption = {};
+        if (sort === "asc") sortOption = { price: 1 };
+        if (sort === "desc") sortOption = { price: -1 };
 
-        if (sort === "asc") {
-          sortOption = { price: 1 };
-        } else if (sort === "desc") {
-          sortOption = { price: -1 };
-        }
+        const query = {
+          foodName: { $regex: search, $options: "i" },
+        };
 
-        const meals = await mealsCollection.find().sort(sortOption).toArray();
+        const meals = await mealsCollection
+          .find(query)
+          .sort(sortOption)
+          .skip(skip)
+          .limit(limit)
+          .toArray();
 
-        res.send(meals);
+        const total = await mealsCollection.countDocuments(query);
+
+        res.send({
+          meals,
+          total,
+          totalPages: Math.ceil(total / limit),
+          currentPage: page,
+        });
       } catch (error) {
         res.status(500).send({
           message: "Failed to fetch meals",
@@ -1193,7 +1331,7 @@ async function run() {
           orderTime: new Date(),
           chefName,
           deliveryTime,
-          chefEmail: meal.chefEmail
+          chefEmail: meal.chefEmail,
         };
 
         const result = await orderCollection.insertOne(order);
@@ -1369,7 +1507,6 @@ async function run() {
       async (req, res) => {
         const { id } = req.params;
         const chefEmail = req.decoded.email;
-        
 
         const order = await orderCollection.findOne({
           _id: new ObjectId(id),
@@ -1411,7 +1548,6 @@ async function run() {
         });
       }
     );
-
 
     // STRIPE PAYMENT
     // __________________________________
@@ -1551,9 +1687,6 @@ async function run() {
         }
       }
     );
-
-
-
   } finally {
   }
 }
