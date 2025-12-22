@@ -8,11 +8,10 @@ const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
-const port = process.env.port || 5000;
 //middleware
 app.use(
   cors({
-    origin: ["http://localhost:5173"],
+    origin: [process.env.CLIENT_DOMAIN, "http://localhost:5173"],
     credentials: true,
   })
 );
@@ -1690,8 +1689,9 @@ async function run() {
 }
 run().catch(console.dir);
 
-module.exports = app;
+//simple get operation
+    app.get("/", (req, res) => {
+      res.send("Homedish-hub server after connecting to mongodb");
+    });
 
-// app.listen(port, () => {
-//   console.log("Server running on port 5000");
-// });
+module.exports = app;
