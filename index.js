@@ -152,8 +152,6 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
-    console.log("mongo connected successfully");
 
     const db = client.db("homeDishDB");
     //collections
@@ -248,8 +246,8 @@ async function run() {
 
         res.cookie("token", token, {
           httpOnly: true,
-          secure: false,
-          sameSite: "lax",
+          secure: true,
+          sameSite: "none",
           path: "/",
           maxAge: 7 * 24 * 60 * 60 * 1000,
         });
@@ -1692,10 +1690,8 @@ async function run() {
 }
 run().catch(console.dir);
 
-app.get("/", (req, res) => {
-  res.send("homedish-hub server running");
-});
+module.exports = app;
 
-app.listen(port, () => {
-  console.log("Server running on port 5000");
-});
+// app.listen(port, () => {
+//   console.log("Server running on port 5000");
+// });
