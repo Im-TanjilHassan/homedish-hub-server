@@ -9,9 +9,18 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 //middleware
+const allowedOrigins = [
+  process.env.CLIENT_DOMAIN,
+  "http://localhost:5173",
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: [process.env.CLIENT_DOMAIN, "http://localhost:5173"],
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   })
 );
@@ -151,7 +160,6 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-
     const db = client.db("homeDishDB");
     //collections
     const userCollection = db.collection("users");
@@ -245,7 +253,7 @@ async function run() {
 
         res.cookie("token", token, {
           httpOnly: true,
-          secure: true,
+          secure: process.env.NODE_ENV === "production",
           sameSite: "none",
           path: "/",
           maxAge: 7 * 24 * 60 * 60 * 1000,
@@ -301,8 +309,9 @@ async function run() {
         res
           .clearCookie("token", {
             httpOnly: true,
-            secure: false,
-            sameSite: "lax",
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "none",
+            path: "/",
           })
           .status(200)
           .json({ success: true, message: "Logged out successfully" });
@@ -1690,8 +1699,16 @@ async function run() {
 run().catch(console.dir);
 
 //simple get operation
-    app.get("/", (req, res) => {
-      res.send("Homedish-hub server after connecting to mongodb");
-    });
+app.get("/", (req, res) => {
+  res.send("Homedish-hub server after connecting to mongodb");
+});
+
+// Start server when running locally (keeps Vercel/serverless imports unchanged)
+if (require.main === module) {
+  const port = process.env.PORT || 5000;
+  app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+  });
+}
 
 module.exports = app;
