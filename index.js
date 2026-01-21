@@ -160,6 +160,9 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
+    // Connect to MongoDB early so startup errors surface in Vercel logs
+    await client.connect();
+    console.log("MongoDB connected");
     const db = client.db("homeDishDB");
     //collections
     const userCollection = db.collection("users");
@@ -195,6 +198,11 @@ async function run() {
     }
 
     await makeAdmin();
+
+    // server warmup endpoint
+    app.get("/health", (req, res) => {
+      res.status(200).send({ alive: true });
+    });
 
     // USER RELATED ROUTES
     //register user
@@ -1693,6 +1701,9 @@ async function run() {
         }
       }
     );
+  } catch (err) {
+    console.error("Startup error:", err);
+    throw err;
   } finally {
   }
 }
